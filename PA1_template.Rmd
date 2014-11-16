@@ -8,18 +8,213 @@ output:
 
 ## Loading and preprocessing the data
 
+```{r}
+suppressMessages(library(dplyr))
+library(dplyr)
+data<-read.csv("activity.csv")
+head(data)
+```
 
 
 ## What is mean total number of steps taken per day?
+```{r}
+library(ggplot2)
+data_by_days <- group_by(data, date)
+steps_per_day <- summarise(data_by_days, 
+                           step_count = sum(steps, na.rm = TRUE)
+                           )
+summary(steps_per_day)
+median_of_steps <- median(steps_per_day$step_count)
+mean_of_steps <- mean(steps_per_day$step_count)
 
+m <- ggplot(steps_per_day, aes(x = step_count))
+m + geom_histogram(color="red", binwidth = 1000)+
+        labs(title = "Histogram of Number of Steps Per Day") + 
+        labs(x = "Number of Steps per Day", y ="Count")+
+        scale_y_continuous(breaks=c(0,1,2,3,4,5,6,7,8,9,10,11),limits=c(0,11))
 
+```
+
+The **mean** of the total number of steps taken per day is `r round(mean_of_steps, digits = 1)`.
+
+The **median** of the the total number of steps taken per day is `r median_of_steps`.
 
 ## What is the average daily activity pattern?
+```{r}
+library(lubridate)
+options(lubridate.verbose = FALSE)
+data_by_5s <- group_by(data, interval)
+head(data_by_5s)
+steps_by_5 <- summarise(data_by_5s, 
+                           step_avg = mean(steps, na.rm = TRUE)
+                           )
+head(steps_by_5)
+df_with_time <- mutate(steps_by_5, 
+          time = as.duration(hms(paste(interval %/% 100, interval %% 100, 0)))/60
+          )
+all_the_best <- summarise(df_with_time, most_steps = max(step_avg),
+                          best_interval = interval[which.max(step_avg)]
+                         )
+g <- ggplot(df_with_time, aes(time, step_avg))
+g+geom_line()+
+        labs(title = "Average Number of Steps Over 5 Minute Intervals") + 
+        labs(x = "Time (minutes)", y ="Average number of steps over all days")
+        
+```
 
+Interval **`r all_the_best[2]`** contains the maximum number of steps 
+on average (`r round(all_the_best[1],1)`) across all the days in the dataset. 
 
-
+**Note:** Interval `r all_the_best[2]` corresponds to 
+`r all_the_best[2] %/% 100`:`r all_the_best[2] %% 100`, which in turn is the 
+ `r (all_the_best[2] %/% 100)*60 + all_the_best[2] %% 100`-th minute of the day.
+ 
 ## Imputing missing values
+```{r}
+data_size <- nrow(data)
+day_span <- nrow(steps_per_day)
+```
+The data spans `r day_span` days and there are `r data_size` 
+entries in the dataset, however there are quite a few missing entries coded as
+NA.
+Dropping the rows containing na's:
 
+```{r}
+data_no_na <- data[complete.cases(data),]
+size_no_na <- nrow(data_no_na)
+dropped_rows_number <- data_size - size_no_na
+```
 
+So the total number of rows with missing values (i.e. NA's) is 
+`r dropped_rows_number`.
+
+I will replace the missing NA's by mean for that particular 5 minute interval.
+
+```{r}
+#creating a vector of averages to be inserted into the original data frame
+avg_steps <- rep(steps_by_5$step_avg, times = 61)
+#inserting avg_steps and a replicate column, col_x into data and calling it 
+# data_plus
+data_plus <- mutate(data, avgs = avg_steps, col_x = steps) 
+
+#creating a boolean vector for the locations of NA's in the original data frame
+na_boolean <- is.na(data$steps)
+
+#mutating col_x by replacing its NA's with the appropriate averages 
+data_plus$col_x[na_boolean] = data_plus$avgs[na_boolean]
+
+#examining data_plus by viewing a selection of rows - some of which contain NA's 
+#and some of which do not. 
+data_plus[285:295,]
+```
+
+Whew.  Replacement is successful: *col_x* of *data_plus* is corresponds to the 
+*steps* column of the original data frame, whose NA entries have been replaced
+by the average for that particular 5 minute interval.
+
+Next, I will create a histogram of this new data (*col_x*) with the missing data
+filled in.
+```{r}
+
+data_plus_by_days <- group_by(data_plus, date)
+steps_per_day_plus <- summarise(data_plus_by_days, 
+                           step_count_plus = sum(col_x)
+                           )
+head(steps_per_day_plus)
+median_of_steps_plus <- median(steps_per_day_plus$step_count_plus)
+mean_of_steps_plus <- mean(steps_per_day_plus$step_count_plus)
+med <- as.integer(median_of_steps_plus)
+m <- ggplot(steps_per_day_plus, aes(x = step_count_plus))
+m + geom_histogram(color="red", binwidth = 1000)+
+        labs(title = "Adjusted Histogram of Number of Steps Per Day") + 
+        labs(x = "Adjusted Number of Steps per Day", y ="Count")+
+        scale_y_continuous(breaks=c(0,1,2,3,4,5,6,7,8,9,10,11),limits=c(0,11))
+
+```
+
+The **mean** of the adjusted total number of steps taken per day is 
+`r as.integer(mean_of_steps_plus)`.
+
+The **median** of the the adjusted total number of steps taken per day is 
+`r med`.
+
+After imputing the missing values both the mean and the median have increased 
+and are now equal. It seems that the total number of steps per day has on 
+average increased after replacing the missing values by the corresponding 5 
+minute interval averages. 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+```{r}
+#Creating a vector of days corresponding to the dates in the data frame
+v <- weekdays(as.Date(data$date))
+
+#adding 
+data_plus<- mutate(data_plus, days = v )
+
+#checking
+head(data_plus)
+```
+
+Now, on to create the new factor variables *weekday* and *weekend*.
+
+```{r}
+weekdays = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+weekenddays = c("Saturday", "Sunday")
+ 
+#adding a for now dummy column to data_plus
+data_plus <- mutate(data_plus, new_col = rep(c("weekend"), times = nrow(data_plus)))
+
+#checking
+head(data_plus, 4)
+
+#adjusting the newly added dummy column so it contains the correct info 
+data_plus$new_col[(data_plus$days %in% weekdays)] = "weekday"
+
+#checking the result using some range where both weekdays and weekends appear
+data_plus[3453:3458,]
+
+#adding a factor variable column to the df
+
+data_plus$new_factor<-factor(data_plus$new_col)
+
+#checking 
+
+str(data_plus$new_factor)
+data_plus[3453:3458,]
+```
+
+Finally, I am going to create a panel plot, containing a time series plot (i.e. type = "l") of the
+5-minute interval (x-axis) and the average number of steps taken, averaged
+across all weekday days or weekend days (y-axis).
+
+
+```{r}
+grouped <- group_by(data_plus, new_factor, interval)
+grouped_steps <- summarise(grouped, step_averages = mean(steps, na.rm = TRUE))
+grouped_steps
+
+#adding a time column measured in minutes to grouped steps
+grouped_steps<- mutate(grouped_steps, 
+          time = as.duration(hms(paste(interval %/% 100, interval %% 100, 0)))/60
+          )
+
+
+#checking 
+grouped_steps[23:33,]
+
+#creating the plots
+weekday_group <- subset(grouped_steps, new_factor == "weekday" )
+weekday_group
+g2 <- ggplot(weekday_group, aes(time, step_averages))
+g2+geom_line()+
+        labs(title = "Average Number of Steps Over 5 Minute Intervals During Weekdays") + 
+        labs(x = "Time (minutes)", y ="Average number of steps over all weekdays")   
+weekend_group <- subset(grouped_steps, new_factor == "weekend")
+weekend_group
+g2 <- ggplot(weekend_group, aes(time, step_averages))
+g2+geom_line()+
+        labs(title = "Average Number of Steps Over 5 Minute Intervals During Weekends") + 
+        labs(x = "Time (minutes)", y ="Average number of steps over all weekends")  
+
+```
